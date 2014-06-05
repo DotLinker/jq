@@ -1,0 +1,12 @@
+#!/bin/sh
+
+# Cross-compile for QNX Neutrino. Requires the QNX 6.6.0 SDP from
+# http://www.qnx.com/download/group.html?programid=26071
+# Also requires a new bison (the one in the SDP is too old).
+
+# In case you are on Mac OS and installed bison via brew, this will
+# add it to your path.
+export PATH="/usr/local/opt/bison/bin:$PATH"
+
+scripts/crosscompile nto-x86 --host=i386-pc-nto-qnx6.6.0 'CC=qcc -Vgcc_ntox86' NM=ntox86-nm RANLIB=ntox86-ranlib AR=ntox86-ar 'LIBS=-lbessel -lm' --disable-shared
+scripts/crosscompile nto-armle-v7 --host=armle-v7-nto-qnx6.6.0 'CC=qcc -Vgcc_ntoarmv7 -EL' NM=ntoarmv7-nm RANLIB=ntoarmv7-ranlib AR=ntoarmv7-ar 'LIBS=-lbessel -lm' --disable-shared
