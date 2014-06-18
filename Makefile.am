@@ -1,7 +1,7 @@
 ### C source files to be built and distributed.
 
 LIBJQ_INCS = jq_parser.h builtin.h bytecode.h compile.h exec_stack.h	\
-   jv_alloc.h jv_dtoa.h jv_unicode.h locfile.h		\
+   libm.h jv_alloc.h jv_dtoa.h jv_unicode.h locfile.h		 	\
    opcode_list.h parser.y jv_utf8_tables.h lexer.l
 
 LIBJQ_SRC = locfile.c bytecode.c compile.c execute.c builtin.c jv.c	\
@@ -74,19 +74,22 @@ man_MANS = jq.1
 if ENABLE_DOCS
 jq.1: $(srcdir)/docs/content/3.manual/manual.yml
 	$(AM_V_GEN) ( cd ${abs_srcdir}/docs; '$(BUNDLER)' exec rake manpage ) > $@ || { rm -f $@; false; }
+jq.1.prebuilt: jq.1
+	$(AM_V_GEN) cp $^ $@ || { rm -f $@; false; }
 jq.1.default: $(srcdir)/docs/default_manpage.md
 	$(AM_V_GEN) ( cd ${abs_srcdir}/docs; '$(BUNDLER)' exec rake manpage_default ) > $@ || { rm -f $@; false; }
-real_docs: jq.1
-	if cmp jq.1 $(srcdir)/jq.1.default > /dev/null; then\
+real_docs: jq.1 jq.1.prebuilt
+	@if cmp jq.1 $(srcdir)/jq.1.default > /dev/null; then\
 	  rm -f jq.1; $(MAKE) $(AM_MAKEFLAGS) jq.1;\
 	fi
 else
-jq.1: $(srcdir)/jq.1.default
+jq.1: $(srcdir)/jq.1.prebuilt
 	$(AM_V_GEN) cp $^ $@
 real_docs:
 	@echo "Ruby dependencies not found, cannot build manpage." > /dev/stderr
 	@echo "Follow the instructions in docs/README.md to install them" > /dev/stderr
 	@echo "and then rerun ./configure" > /dev/stderr
+	@echo "A pre-built, possibly out-of-date manpage used." > /dev/stderr
 	false
 endif
 

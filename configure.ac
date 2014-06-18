@@ -1,4 +1,4 @@
-m4_define([jq_version], m4_esyscmd_s([git describe --always --dirty --match 'jq-*'|sed 's/^jq-//']))
+m4_define([jq_version], m4_esyscmd_s([git describe --tags --dirty --match 'jq-*'|sed 's/^jq-//']))
 
 AC_INIT([jq], [jq_version], [mu@netsoc.tcd.ie],
              [jq], [http://stedolan.github.com/jq/])
@@ -79,6 +79,9 @@ EOF
 
 AM_CONDITIONAL([ENABLE_DOCS], [test "x$enable_docs" != xno])
 
+AC_FIND_FUNC([isatty], [c], [#include <unistd.h>], [0])
+AC_FIND_FUNC([_isatty], [c], [#include <io.h>], [0])
+
 AC_ARG_ENABLE([pthread-tls],
               [AC_HELP_STRING([--enable-pthread-tls],
                               [Enable use of pthread thread local storage])],
@@ -103,6 +106,12 @@ if test $have___thread = yes; then
 fi
 AC_MSG_RESULT($have___thread)
 
+AC_C_BIGENDIAN(
+   AC_DEFINE([IEEE_MC68k], 1, [machine is bigendian]),
+   AC_DEFINE([IEEE_8087], 1, [machine is littleendian]),
+   AC_MSG_ERROR(unknown endianess),
+   AC_MSG_ERROR(universial endianess not supported)
+)
 
 AC_SUBST([BUNDLER], ["$bundle_cmd"])
 

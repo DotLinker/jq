@@ -1,7 +1,8 @@
+#include <assert.h>
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
 #include "builtin.h"
 #include "compile.h"
 #include "jq_parser.h"
@@ -156,23 +157,33 @@ static jv f_minus(jv input, jv a, jv b) {
 }
 
 static jv f_multiply(jv input, jv a, jv b) {
+  jv_kind ak = jv_get_kind(a);
+  jv_kind bk = jv_get_kind(b);
   jv_free(input);
-  if (jv_get_kind(a) == JV_KIND_NUMBER && jv_get_kind(b) == JV_KIND_NUMBER) {
+  if (ak == JV_KIND_NUMBER && bk == JV_KIND_NUMBER) {
     return jv_number(jv_number_value(a) * jv_number_value(b));
-  } else if (jv_get_kind(a) == JV_KIND_STRING && jv_get_kind(b) == JV_KIND_NUMBER) {
+  } else if ((ak == JV_KIND_STRING && bk == JV_KIND_NUMBER) ||
+             (ak == JV_KIND_NUMBER && bk == JV_KIND_STRING)) {
+    jv str = a;
+    jv num = b;
+    if (ak == JV_KIND_NUMBER) {
+      str = b;
+      num = a;
+    }
     int n;
-    size_t alen = jv_string_length_bytes(jv_copy(a));
-    jv res = a;
+    size_t alen = jv_string_length_bytes(jv_copy(str));
+    jv res = str;
 
-    for (n = jv_number_value(b) - 1; n > 0; n--)
-      res = jv_string_append_buf(res, jv_string_value(a), alen);
+    for (n = jv_number_value(num) - 1; n > 0; n--)
+      res = jv_string_append_buf(res, jv_string_value(str), alen);
 
+    jv_free(num);
     if (n < 0) {
-      jv_free(a);
+      jv_free(str);
       return jv_null();
     }
     return res;
-  } else if (jv_get_kind(a) == JV_KIND_OBJECT && jv_get_kind(b) == JV_KIND_OBJECT) {
+  } else if (ak == JV_KIND_OBJECT && bk == JV_KIND_OBJECT) {
     return jv_object_merge_recursive(a, b);
   } else {
     return type_error2(a, b, "cannot be multiplied");
@@ -565,6 +576,26 @@ static jv f_error(jv input, jv msg) {
   return jv_invalid_with_msg(msg);
 }
 
+// FIXME Should autoconf check for this!
+#ifndef WIN32
+extern const char **environ;
+#endif
+
+static jv f_env(jv input) {
+  jv_free(input);
+  jv env = jv_object();
+  const char *var, *val;
+  for (const char **e = environ; *e != NULL; e++) {
+    var = e[0];
+    val = strchr(e[0], '=');
+    if (val == NULL)
+      env = jv_object_set(env, jv_string(var), jv_null());
+    else if (var - val < INT_MAX)
+      env = jv_object_set(env, jv_string_sized(var, val - var), jv_string(val + 1));
+  }
+  return env;
+}
+
 #define LIBM_DD(name) \
   {(cfunction_ptr)f_ ## name, "_" #name, 1},
    
@@ -610,6 +641,7 @@ static const struct cfunction function_list[] = {
   {(cfunction_ptr)f_max_by_impl, "_max_by_impl", 2},
   {(cfunction_ptr)f_error, "error", 2},
   {(cfunction_ptr)f_format, "format", 2},
+  {(cfunction_ptr)f_env, "env", 1},
 };
 #undef LIBM_DD
 
@@ -661,27 +693,34 @@ static block bind_bytecoded_builtins(block b) {
 static const char* const jq_builtins[] = {
   "def map(f): [.[] | f];",
   "def select(f): if f then . else empty end;",
-  "def sort_by(f): _sort_by_impl(map([f]));",
-  "def group_by(f): _group_by_impl(map([f]));",
-  "def unique: group_by(.) | map(.[0]);",
-  "def unique_by(f): group_by(f) | map(.[0]);",
-  "def max_by(f): _max_by_impl(map([f]));",
-  "def min_by(f): _min_by_impl(map([f]));",
+  "def sort(f): _sort_by_impl(map([f]));",
+  "def sort_by(f): sort(f);",
+  "def group(f): _group_by_impl(map([f]));",
+  "def group_by(f): group(f);",
+  "def unique: group(.) | map(.[0]);",
+  "def unique(f): group(f) | map(.[0]);",
+  "def unique_by(f): unique(f);",
+  "def max(f): _max_by_impl(map([f]));",
+  "def min(f): _min_by_impl(map([f]));",
+  "def max_by(f): max(f);",
+  "def min_by(f): min(f);",
 #include "libm.h"
   "def add: reduce .[] as $x (null; . + $x);",
   "def del(f): delpaths([path(f)]);",
   "def _assign(paths; value): value as $v | reduce path(paths) as $p (.; setpath($p; $v));",
   "def _modify(paths; update): reduce path(paths) as $p (.; setpath($p; getpath($p) | update));",
   "def recurse(f): ., (f | select(. != null) | recurse(f));",
-  "def recurse_down: recurse(.[]?);",
+  "def recurse: recurse(.[]?);",
+  "def recurse_down: recurse;",
   "def to_entries: [keys[] as $k | {key: $k, value: .[$k]}];",
-  "def from_entries: map({(.key): .value}) | add;",
+  "def from_entries: map({(.key): .value}) | add | .//={};",
   "def with_entries(f): to_entries | map(f) | from_entries;",
   "def reverse: [.[length - 1 - range(0;length)]];",
-  "def index(i): .[i][0];",
-  "def rindex(i): .[i][-1:][0];",
+  "def indices(i): if type == \"array\" and (i|type) == \"array\" then .[i] elif type == \"array\" then .[[i]] else .[i] end;",
+  "def index(i):   if type == \"array\" and (i|type) == \"array\" then .[i] elif type == \"array\" then .[[i]] else .[i] end | .[0];",
+  "def rindex(i):  if type == \"array\" and (i|type) == \"array\" then .[i] elif type == \"array\" then .[[i]] else .[i] end | .[-1:][0];",
   "def paths: path(recurse(if (type|. == \"array\" or . == \"object\") then .[] else empty end))|select(length > 0);",
-  "def leaf_paths: . as $dot|paths|select(. as $p|$dot|getpath($p)|type|. != \"array\" and . != \"object\");",
+  "def paths(node_filter): . as $dot|paths|select(. as $p|$dot|getpath($p)|node_filter);",
   "def any: reduce .[] as $i (false; . or $i);",
   "def all: reduce .[] as $i (true; . and $i);",
   "def arrays: select(type == \"array\");",
@@ -693,6 +732,11 @@ static const char* const jq_builtins[] = {
   "def nulls: select(type == \"null\");",
   "def values: arrays, objects, booleans, numbers, strings;",
   "def scalars: select(. == null or . == true or . == false or type == \"number\" or type == \"string\");",
+  "def leaf_paths: paths(scalars);",
+  "def join(x): reduce .[] as $i (\"\"; . + (if . == \"\" then $i else x + $i end));",
+  "def flatten: reduce .[] as $i ([]; if $i | type == \"array\" then . + ($i | flatten) else . + [$i] end);",
+  "def flatten(x): reduce .[] as $i ([]; if $i | type == \"array\" and x > 0 then . + ($i | flatten(x-1)) else . + [$i] end);",
+  "def range(x): range(0;x);",
 };
 #undef LIBM_DD
 
